@@ -1,0 +1,13 @@
+# Solmaris — High Noon build ignores
+# Local build output produced by `node main.ts` (MAKEFUN_OUTPUT_DIR=out)
+out/
+# Local scratch the builder uses while testing (never part of the entry)
+tmp/
+*.log
+# Editor / OS litter
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+# Dependencies (none vendored here; three.js is vendored under game/vendor/)
+node_modules/
