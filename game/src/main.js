@@ -8,7 +8,7 @@
 //    from the URL seed (?seed=N, default 1).
 //  - Save/load uses sim time only; IDs come from a monotonic counter.
 //  - No unseeded random source and no wall-clock read exists in this file.
-const THREE = window.THREE;
+import * as THREE from '../vendor/three.min.js';
 import { CFG, clamp, dist2d, fmtClock, fnv1a, angleLerp } from './config.js';
 import { makeStreams } from './random.js';
 import { Input } from './input.js';
@@ -25,6 +25,10 @@ import { Minimap } from './minimap.js';
 import { Effects } from './effects.js';
 import { saveGame, loadGame, hasSave, loadSettings, saveSettings, applySave } from './save.js';
 import { applyShot, SHOT_MODES } from './shots.js';
+
+// The other game modules address THREE as a global at call time; publish the
+// vendored module build there before anything constructs a scene object.
+window.THREE = THREE;
 
 const params = new URLSearchParams(location.search);
 const SEED = parseInt(params.get('seed') || '1', 10) || 1;
@@ -247,11 +251,19 @@ function init() {
   // --- fixed-timestep step: exactly one dt tick, in a fixed system order ---
   const prevKeys = new Set();
   function pressed(code) { return input.down(code) && !prevKeys.has(code); }
+  function syncPrevKeys() { prevKeys.clear(); input.keys.forEach((k) => prevKeys.add(k)); }
   function step() {
+    // Pause toggle must work while paused, so it is handled before the
+    // early return below (otherwise Esc could never unpause the game).
+    if (state.started && !state.over && (pressed('Escape') || pressed('KeyP'))) {
+      state.paused = !state.paused;
+      hud.showPause(state.paused);
+      syncPrevKeys();
+      return;
+    }
     if (!state.started || state.paused || state.over) {
       // Even when paused, keep the render loop alive; the sim does not advance.
-      prevKeys.clear();
-      input.keys.forEach((k) => prevKeys.add(k));
+      syncPrevKeys();
       return;
     }
     sim.tick += 1;
@@ -288,10 +300,7 @@ function init() {
       if (data) { applySave(state, data); hud.flash('Loaded save — ' + data.savedAt); }
       else hud.flash('No save found');
     }
-    if (pressed('Escape') || pressed('KeyP')) {
-      state.paused = !state.paused;
-      hud.showPause(state.paused);
-    }
+    // (Pause is toggled at the top of step(), before the early return.)
 
     // Mouse look: camera yaw from accumulated mouse movement.
     const mdx = input.consumeMouseDX();

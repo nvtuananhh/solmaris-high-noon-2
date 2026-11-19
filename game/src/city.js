@@ -78,11 +78,14 @@ export class City {
   _buildBlocks(scene) {
     const rng = this.rng;
     // Old town: dense low whitewashed blocks around the square (0,0).
+    // Blocks sit at cell centres (roads run on multiples of 60), so no
+    // building ever stands on a road; the four cells around the square
+    // stay open as the plaza.
     for (let gx = -2; gx <= 2; gx++) {
       for (let gz = -2; gz <= 2; gz++) {
-        if (gx === 0 && gz === 0) continue; // the square
-        const cx = gx * 60 + range(rng, -6, 6);
-        const cz = gz * 60 + range(rng, -6, 6);
+        const cx = gx * 60 + (gx >= 0 ? 30 : -30) + range(rng, -4, 4);
+        const cz = gz * 60 + (gz >= 0 ? 30 : -30) + range(rng, -4, 4);
+        if (Math.abs(cx) < 38 && Math.abs(cz) < 38) continue; // the square
         const h = range(rng, 7, 15);
         const color = pick(rng, WALL_COLORS);
         const b = this._box(range(rng, 18, 30), h, range(rng, 18, 30), color, cx, h / 2, cz);
@@ -186,7 +189,7 @@ export class City {
     }
     // Stunt ramp on the boulevard (for jumps).
     const ramp = new THREE.Mesh(new THREE.BoxGeometry(8, 0.4, 10), this._mat(0xe88ca0));
-    ramp.position.set(40, 0.9, 180); ramp.rotation.x = -0.28; ramp.castShadow = true;
+    ramp.position.set(40, 0.55, 180); ramp.rotation.x = -0.22; ramp.castShadow = true;
     scene.add(ramp);
     this.ramp = { x: 40, z: 180 };
     // Respray garage ("Fresh Coat") at (60, -120): drive in to cool wanted heat.

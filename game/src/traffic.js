@@ -39,9 +39,10 @@ export class Traffic {
     }
   }
   nearestCar(x, z, maxDist, exclude) {
+    // Parked cars are stealable, NPC cars are stealable: no parked exclusion.
     let best = null, bestD = maxDist;
     for (const c of this.cars) {
-      if (c === exclude || c.parked) continue;
+      if (c === exclude) continue;
       const d = dist2d(x, z, c.pos.x, c.pos.z);
       if (d < bestD) { bestD = d; best = c; }
     }
