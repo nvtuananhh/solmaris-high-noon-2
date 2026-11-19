@@ -38,7 +38,11 @@ export function applyShot(state, mode) {
     st.missions.setObjective('Heat Wave: survive the dragnet — reach the safehouse!');
     st.missions.setMarker(-150, 30);
     st.cash = 1240;
-    st.shotCam = { x: -48, y: 10, z: 158, lookX: 2, lookY: 1.5, lookZ: 178 };
+    // Low, close chase cam: the player's red car (parked by the shot at
+    // (-20,176) — shot cars don't drive without input) fills the frame,
+    // the two police cars behind it, boulevard + palms + towers beyond.
+    st.shotCam = { x: -40, y: 6.5, z: 160, lookX: -16, lookY: 1.5, lookZ: 177 };
+    if (st.camPos) st.camPos.set(st.shotCam.x, st.shotCam.y, st.shotCam.z);
   } else if (mode === 'foot') {
     // On foot in the Old Town square: peds, stalls, fountain, whitewashed walls.
     p.pos.set(6, 0, 16); p.heading = Math.PI * 0.9; p.car = null;
@@ -47,8 +51,12 @@ export function applyShot(state, mode) {
     st.missions.setMarker(10, 8);
     st.cash = 120;
     st.shotCam = { x: -8, y: 6, z: 30, lookX: 6, lookY: 1.5, lookZ: 12 };
+    if (st.camPos) st.camPos.set(st.shotCam.x, st.shotCam.y, st.shotCam.z);
   } else if (mode === 'drive') {
     // Driving the cliffside coast highway with the sea and skyline behind.
+    // The car coasts ~32 units north during the 120 settle ticks (throttle
+    // off, drag on), so it ends near (-198,-8): the camera aims there, not
+    // at the staging point.
     const car = park(-198, -40, 0, 0x3a6ea8, 'sedan');
     car.parked = false;
     st.enterCar(car);
@@ -58,7 +66,10 @@ export function applyShot(state, mode) {
     park(-192, 30, Math.PI, 0xe8e4da, 'sedan');
     st.missions.setObjective('Free roam — press M for the next mission');
     st.cash = 640;
-    st.shotCam = { x: -184, y: 6, z: -38, lookX: -198, lookY: 1.5, lookZ: 2 };
+    // Close over-the-shoulder drive cam: the blue car big in frame, sea to
+    // the right, skyline to the left, highway dashes leading the eye north.
+    st.shotCam = { x: -194, y: 4, z: -17, lookX: -198, lookY: 1.5, lookZ: -7 };
+    if (st.camPos) st.camPos.set(st.shotCam.x, st.shotCam.y, st.shotCam.z);
   } else if (mode === 'combat') {
     // "The Drop" ambush: Mara on foot, pistol out, three rivals closing in.
     p.pos.set(0, 0, -78); p.heading = Math.PI; p.car = null;
@@ -72,7 +83,8 @@ export function applyShot(state, mode) {
     st.missions.setObjective('The Drop: deal with the ambush, then deliver to the Marina');
     st.missions.setMarker(150, 150);
     st.cash = 870;
-    st.shotCam = { x: -14, y: 10, z: -48, lookX: 0, lookY: 1.2, lookZ: -92 };
+    st.shotCam = { x: -12, y: 7, z: -58, lookX: 0, lookY: 1.2, lookZ: -92 };
+    if (st.camPos) st.camPos.set(st.shotCam.x, st.shotCam.y, st.shotCam.z);
   }
   // Drive the sim a fixed number of ticks so motion, bob and blink settle
   // identically for this seed, then render and signal readiness by frames.
