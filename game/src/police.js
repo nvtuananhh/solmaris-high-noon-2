@@ -110,6 +110,11 @@ export class Police {
           p.damage(6, 'police ram');
         }
         state.fx.burst(p.pos.x, 1.2, p.pos.z, 0xff5533, 2, 3);
+        // Thud + shake on the hit, tick-gated so it fires once per ram.
+        if (state.sim.tick % 45 === 0) {
+          state.audio.thud();
+          state.fx.addShake(0.35);
+        }
       }
       if (d > 260) { car.dispose(); this.cars.splice(this.cars.indexOf(car), 1); }
     }

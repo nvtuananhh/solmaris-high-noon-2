@@ -42,5 +42,9 @@ export function makeStreams(baseSeed) {
     effects: makeRng(salt('effects')),
     missions: makeRng(salt('missions')),
     police: makeRng(salt('police')),
+    // props: visual-only city dressing (facades, street props, clouds).
+    // Its own stream, so dressing draws can never shift the world layout
+    // or any gameplay stream's draw order.
+    props: makeRng(salt('props')),
   };
 }

@@ -61,6 +61,7 @@ export class Car {
       tl.position.set(lx, 0.62, -L / 2 - 0.02);
       g.add(tl);
     }
+    this._tailMat = tailMat;
     return g;
   }
   // Arcade handling for one fixed tick. Input is -1..1 throttle/steer.
@@ -91,6 +92,8 @@ export class Car {
     for (const w of this.wheels) w.rotation.x += spin;
     // Body roll/lean from steering, pure function of steer + speed.
     this.mesh.rotation.z = -this.steer * 0.03 * clamp(Math.abs(this.speed) / 12, 0, 1);
+    // Brake lights flare when braking or handbraking — a pure function of input.
+    if (this._tailMat) this._tailMat.color.setHex((handbrake || throttle < 0) ? 0xff4444 : 0xd92b2b);
   }
   damage(amount) {
     this.health -= amount;

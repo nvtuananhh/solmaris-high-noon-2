@@ -2,8 +2,9 @@
 // All timing is driven by the sim clock passed into update(simNow, tick):
 // siren phase, music step and engine pitch read sim time, never a wall clock.
 // Randomness (siren wobble phase, music variation) comes from the audio RNG
-// stream, drawn once at init in a fixed order.
-import { range } from './random.js';
+// stream, drawn once at init in a fixed order. The percussion noise buffer
+// is generated from a fixed local seed, so it is identical every run.
+import { range, makeRng } from './random.js';
 
 export class AudioEngine {
   constructor(rngAudio) {
@@ -18,8 +19,16 @@ export class AudioEngine {
     this._sirenPhase = rngAudio ? range(rngAudio, 0, Math.PI * 2) : 0;
     this._musicStep = 0;
     this._lastMusicTick = -1;
+    this._lastBar = -1;
+    this._noiseBuf = null;
     this._bassNotes = [55, 55, 65.41, 49, 55, 55, 73.42, 65.41];
     this._leadNotes = [220, 261.63, 329.63, 261.63, 220, 196, 246.94, 293.66];
+    this._chords = [
+      [130.81, 164.81, 196.00],
+      [110.00, 130.81, 164.81],
+      [98.00, 123.47, 146.83],
+      [87.31, 110.00, 130.81],
+    ];
     this._muted = false;
   }
   ensure() {
@@ -43,6 +52,24 @@ export class AudioEngine {
       lp.type = 'lowpass'; lp.frequency.value = 420;
       this.engineOsc.connect(lp); lp.connect(this.engineGain); this.engineGain.connect(this.master);
       this.engineOsc.start();
+      // Sub-octave engine voice: a second sawtooth an octave down makes the
+      // car sound like an engine, not a single buzzer.
+      this.subOsc = this.ctx.createOscillator();
+      this.subOsc.type = 'sawtooth';
+      this.subOsc.frequency.value = 27.5;
+      this.subGain = this.ctx.createGain();
+      this.subGain.gain.value = 0;
+      const subLp = this.ctx.createBiquadFilter();
+      subLp.type = 'lowpass'; subLp.frequency.value = 220;
+      this.subOsc.connect(subLp); subLp.connect(this.subGain); this.subGain.connect(this.master);
+      this.subOsc.start();
+      // Deterministic noise buffer for hats / crash noise (fixed local seed).
+      const nrng = makeRng(0xc0ffee);
+      const nlen = Math.floor(this.ctx.sampleRate * 0.5);
+      const nbuf = this.ctx.createBuffer(1, nlen, this.ctx.sampleRate);
+      const nd = nbuf.getChannelData(0);
+      for (let i = 0; i < nlen; i++) nd[i] = nrng() * 2 - 1;
+      this._noiseBuf = nbuf;
       this.sirenOsc = this.ctx.createOscillator();
       this.sirenOsc.type = 'sine';
       this.sirenOsc.frequency.value = 700;
@@ -81,12 +108,88 @@ export class AudioEngine {
     };
     play(bass, 0.24, 'triangle', 0.5);
     if (step % 2 === 0) play(lead, 0.18, 'square', 0.10);
+    // Percussion: kick on the beat, hat off it — the loop finally grooves.
+    if (step % 4 === 0) this._kick(t);
+    if (step % 2 === 1) this._hat(t);
+  }
+  _kick(t) {
+    if (!this.ctx) return;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(130, t);
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.15);
+  }
+  _hat(t) {
+    if (!this.ctx || !this._noiseBuf) return;
+    const src = this.ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const f = this.ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 6000;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.07, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+    src.connect(f); f.connect(g); g.connect(this.master);
+    src.start(t, 0.1); src.stop(t + 0.05);
+  }
+  // One soft pad chord per 32-step bar, from a fixed chord table.
+  _padChord(bar) {
+    if (!this.ctx || !this.musicGain) return;
+    const t = this.ctx.currentTime + 0.02;
+    const chord = this._chords[bar % this._chords.length];
+    for (const freq of chord) {
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = 'triangle'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.045, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.9);
+      o.connect(g); g.connect(this.musicGain);
+      o.start(t); o.stop(t + 1.95);
+    }
+  }
+  // Rising four-note sting: mission starts and wanted-level jumps.
+  sting() {
+    if (!this.ctx || !this.master) return;
+    try {
+      const t = this.ctx.currentTime;
+      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+        const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+        o.type = 'square'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.09, t + i * 0.09);
+        g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.09 + 0.16);
+        o.connect(g); g.connect(this.master); o.start(t + i * 0.09); o.stop(t + i * 0.09 + 0.18);
+      });
+    } catch (_) { /* audio is best-effort */ }
+  }
+  // Low thud for crashes and rams: sine drop + a burst of noise.
+  thud() {
+    if (!this.ctx || !this.master) return;
+    try {
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(100, t);
+      o.frequency.exponentialRampToValueAtTime(35, t + 0.18);
+      g.gain.setValueAtTime(0.5, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.22);
+      if (this._noiseBuf) {
+        const src = this.ctx.createBufferSource(); src.buffer = this._noiseBuf;
+        const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 400;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(0.25, t);
+        ng.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        src.connect(f); f.connect(ng); ng.connect(this.master);
+        src.start(t, 0.2); src.stop(t + 0.13);
+      }
+    } catch (_) { /* audio is best-effort */ }
   }
   update(simNow, tick, speed, wanted) {
     if (!this.ctx) return;
     const engineTarget = speed > 0.2 ? 0.05 + Math.min(0.10, speed * 0.003) : 0.0;
     if (this.engineGain) this.engineGain.gain.value = engineTarget;
     if (this.engineOsc) this.engineOsc.frequency.value = 55 + speed * 3.2;
+    if (this.subOsc) this.subOsc.frequency.value = (55 + speed * 3.2) / 2;
+    if (this.subGain) this.subGain.gain.value = engineTarget * 0.6;
     // Siren: two-tone wobble keyed to sim time, fixed phase from init.
     const phase = simNow * 2.4 + this._sirenPhase;
     const tone = Math.sin(phase) > 0 ? 715 : 932;
@@ -97,6 +200,11 @@ export class AudioEngine {
       this._lastMusicTick = step;
       this._musicStep = step;
       this._musicNote(step);
+    }
+    const bar = Math.floor(step / 32);
+    if (bar !== this._lastBar) {
+      this._lastBar = bar;
+      this._padChord(bar);
     }
   }
   gunshot() {

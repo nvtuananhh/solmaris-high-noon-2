@@ -18,6 +18,7 @@ export class HUD {
       banner: document.getElementById('hud-banner'),
       ammo: document.getElementById('hud-ammo'),
       tokens: document.getElementById('hud-tokens'),
+      damage: document.getElementById('hud-damage'),
       start: document.getElementById('start-screen'),
       pause: document.getElementById('pause-screen'),
       over: document.getElementById('over-screen'),
@@ -72,8 +73,33 @@ export class HUD {
     if (this.el.ammo) this.el.ammo.textContent = p.weapon === 'pistol' ? 'Pistol · ' + p.ammo + ' rounds' : 'Fists — press 2 for pistol';
     if (this.el.tokens) this.el.tokens.textContent = '☀ ' + st.tokensCollected.size + '/12';
     if (this.el.speed) {
-      const v = p.car ? Math.abs(p.car.speed) * 3.6 : 0;
-      this.el.speed.textContent = p.car ? Math.round(v) + ' km/h' : 'On foot';
+      if (p.car) {
+        // Speed + gear: gear is a pure function of speed, so the readout
+        // is deterministic and gives the drive a sense of progression.
+        const v = Math.abs(p.car.speed) * 3.6;
+        const gear = v < 1 ? 'N' : Math.min(5, Math.floor(v / 24) + 1);
+        this.el.speed.textContent = Math.round(v) + ' km/h · Gear ' + gear;
+      } else this.el.speed.textContent = 'On foot';
+    }
+    if (this.el.objective) {
+      // Objective tracker: the mission countdown rides on the objective
+      // line while a timed mission is running.
+      let t = '◆ ' + st.objective;
+      if (st.missions && st.missions.timerActive && st.missionTimer > 0) {
+        const s = Math.ceil(st.missionTimer);
+        t += ' · ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      }
+      this.el.objective.textContent = t;
+    }
+    if (this.el.damage) {
+      // Damage vignette: red screen edge, tick-based so it is deterministic.
+      // A fresh hit flashes hard and fades over 30 ticks; below 30 HP the
+      // edge pulses while Mara is hurt.
+      let o = 0;
+      const age = tick - (st.damageFlashTick || -1);
+      if (age >= 0 && age < 30) o = 0.5 * (1 - age / 30);
+      if (p.health < 30 && p.health > 0) o = Math.max(o, 0.16 + 0.08 * Math.sin(simNow * 4));
+      this.el.damage.style.opacity = String(o);
     }
     if (this.el.stars) {
       // Wanted stars blink when the level is high, on a sim-time square wave.

@@ -25,6 +25,10 @@ export class Missions {
     this.activeFare = null;
     this.race = null;
     this.raceCheckpoints = [];
+    // True only while a timed mission (2 or 3) is actually running.
+    // The HUD countdown and the fail-retry branches read this, so a
+    // leftover timer from a finished mission can never fake a timeout.
+    this.timerActive = false;
     this._buildMarker();
   }
   _buildMarker() {
@@ -67,9 +71,10 @@ export class Missions {
     st.missionIndex = i;
     st.missionStage = 0;
     st.missionTimer = 0;
+    this.timerActive = (i === 2 || i === 3);
     const def = MISSION_DEFS[i];
     if (!def) return;
-    if (!silent) st.banner('MISSION: ' + def.name);
+    if (!silent) { st.banner('MISSION: ' + def.name); st.audio.sting(); }
     if (i === 0) {
       this.setObjective('First Fare: meet Dario at the Old Town square');
       this.setMarker(10, 8);
@@ -101,6 +106,8 @@ export class Missions {
     st.missionsDone.push(idx);
     st.banner('MISSION COMPLETE — ' + MISSION_DEFS[idx].name + '  +$' + pay);
     st.audio.chime();
+    st.missionTimer = 0;
+    this.timerActive = false;
     st.police.coolOff(60);
     this.clearMarker();
     st.missionIndex = idx + 1;
@@ -240,6 +247,7 @@ export class Missions {
       }
     } else if (i === 2) {
       st.missionTimer -= dt;
+      let done = false;
       if (st.missionStage === 0 && at(0, -180, 5)) {
         st.missionStage = 1;
         this.setObjective('The Drop: package aboard — deliver to the Marina (150, 150). Rivals incoming!');
@@ -250,8 +258,12 @@ export class Missions {
         st.police.addHeat(14, simNow);
       } else if (st.missionStage === 1 && at(150, 150, 7)) {
         this.completeMission();
+        done = true;
       }
-      if (st.missionTimer <= 0 && st.missionStage < 2) {
+      // The retry must not fire on the tick the mission completes:
+      // completeMission zeroes the timer, and a bare timer check here
+      // would instantly restart a finished job.
+      if (!done && this.timerActive && st.missionTimer <= 0 && st.missionStage < 2) {
         st.flash('The Drop failed — out of time. Press M to retry.');
         st.missionIndex = 2; st.missionStage = 0;
         this.startMission(2, true);
@@ -260,7 +272,7 @@ export class Missions {
       st.missionTimer -= dt;
       if (at(-150, 30, 8) && st.wanted <= 1) {
         this.completeMission();
-      } else if (st.missionTimer <= 0) {
+      } else if (this.timerActive && st.missionTimer <= 0) {
         st.flash('Heat Wave failed — the dragnet caught up. Press M to retry.');
         this.startMission(3, true);
       }

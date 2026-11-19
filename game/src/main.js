@@ -95,7 +95,8 @@ function init() {
   sun.shadow.camera.top = 260; sun.shadow.camera.bottom = -260;
   sun.shadow.camera.far = 600;
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0xe6d9b8, 0.9));
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0xe6d9b8, 0.9);
+  scene.add(hemi);
   scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 
   // --- the one state object every system reads ---
@@ -108,6 +109,7 @@ function init() {
     racesWon: 0, faresDone: 0, kills: 0, nextId: 1000,
     started: false, paused: false, over: false, overKind: '',
     shotMode: null, shotCam: null, cameraYaw: Math.PI * 0.85,
+    damageFlashTick: -1, camPos: new THREE.Vector3(20, 12, 40),
     settings: { ...settings },
   };
   const hud = new HUD(state);
@@ -122,8 +124,45 @@ function init() {
   input.onFirstGesture = () => audio.ensure();
   const fx = new Effects(scene, streams.effects);
   state.fx = fx;
-  const city = new City(scene, streams.world);
+  const city = new City(scene, streams.world, streams.props);
   state.city = city;
+
+  // --- sim-clock day cycle: sun angle/colour, sky, fog and the sun disc
+  // are pure functions of the in-game clock (state.minutes), so the same
+  // tick always shows the same light. Noon reproduces the round-11
+  // lighting exactly (sun elevation 59 deg, azimuth 63.5 deg); the light
+  // warms toward golden hour as the day advances, and falls to cool
+  // moonlight after 18:00.
+  const noonSky = new THREE.Color(0x87ceeb), duskSky = new THREE.Color(0xf7b267);
+  const noonSunCol = new THREE.Color(0xfff2d8), duskSunCol = new THREE.Color(0xff9a4d);
+  const noonFogCol = new THREE.Color(0x9fd4ef), duskFogCol = new THREE.Color(0xe8a06a);
+  const nightSky = new THREE.Color(0x16233d), nightSunCol = new THREE.Color(0x8fa8d8);
+  const SUN_AZ = 63.5 * Math.PI / 180, SUN_R = 260;
+  function updateDaylight() {
+    const m = state.minutes;
+    const dayT = (m - 360) / 720; // 0 at 06:00, 1 at 18:00
+    if (dayT >= 0 && dayT <= 1) {
+      const el = (12 + 47 * Math.sin(dayT * Math.PI)) * Math.PI / 180;
+      const warmth = Math.abs(dayT - 0.5) * 2;
+      sun.position.set(Math.cos(el) * Math.sin(SUN_AZ) * SUN_R, Math.sin(el) * SUN_R,
+        Math.cos(el) * Math.cos(SUN_AZ) * SUN_R);
+      sun.color.lerpColors(noonSunCol, duskSunCol, warmth);
+      sun.intensity = 2.6 - warmth * 0.7;
+      scene.background.lerpColors(noonSky, duskSky, warmth * 0.75);
+      scene.fog.color.lerpColors(noonFogCol, duskFogCol, warmth * 0.75);
+      hemi.intensity = 0.9 - warmth * 0.3;
+    } else {
+      // Night: low cool moonlight, dark sky.
+      sun.position.set(60, 120, 40);
+      sun.color.copy(nightSunCol);
+      sun.intensity = 0.55;
+      scene.background.copy(nightSky);
+      scene.fog.color.copy(nightSky);
+      hemi.intensity = 0.3;
+    }
+    if (city.sunDisc) city.sunDisc.position.copy(sun.position).normalize().multiplyScalar(520);
+  }
+  updateDaylight();
 
   // --- player: Mara on foot ---
   const playerMesh = buildMaraMesh();
@@ -138,6 +177,7 @@ function init() {
     damage(amount, source) {
       if (state.over || !state.started) return;
       this.health -= amount;
+      state.damageFlashTick = sim.tick;
       fx.addShake(0.45);
       hud.flash('-' + Math.round(amount) + ' HP (' + source + ')');
       if (this.health <= 0) { this.health = 0; wasted(); }
@@ -175,9 +215,6 @@ function init() {
     car.parked = false;
     player.car = car;
     player.mesh.visible = false;
-    if (car.stolen === false && car.driver === 'player') {
-      // Stealing a parked or NPC car is a crime (handled by stealCar).
-    }
     return true;
   }
   function exitCar() {
@@ -274,6 +311,9 @@ function init() {
     // In-game clock advances: 1 sim second = 0.5 game minutes.
     state.minutes += dt * 0.5;
     if (state.minutes >= 24 * 60) state.minutes -= 24 * 60;
+    // Light follows the sim clock; clouds drift on sim time.
+    updateDaylight();
+    city.updateClouds(now);
 
     // --- edge-triggered actions ---
     if (pressed('KeyE')) {
@@ -318,6 +358,8 @@ function init() {
       player.heading = car.heading;
       if (Math.abs(car.speed) > 3 && sim.tick % 20 === 0) fx.dust(car.pos.x, 0.3, car.pos.z - Math.cos(car.heading) * 2);
       if (input.down('Space') && Math.abs(car.speed) > 8) fx.dust(car.pos.x, 0.3, car.pos.z);
+      // A battered car smokes — tick-gated, so the effect is deterministic.
+      if (car.health < 45 && sim.tick % 12 === 0) fx.burst(car.pos.x, 1.1, car.pos.z, 0x555555, 3, 1.4);
       // Stunt jump: driving over the ramp at speed launches the car (visual only).
       if (dist2d(car.pos.x, car.pos.z, 40, 180) < 5 && Math.abs(car.speed) > 18 && car._jumpT !== sim.tick) {
         car._jumpT = sim.tick;
@@ -370,10 +412,20 @@ function init() {
     }
 
     // --- systems, fixed order ---
+    const prevWanted = police.wanted;
     traffic.update(dt, state);
     peds.update(dt, now, state);
     police.update(dt, now, state);
     state.wanted = police.wanted;
+    // Wanted-level transition feedback: a sting + banner when the heat
+    // rises, a quiet flash when it is lost. Pure sim state, deterministic.
+    if (state.wanted > prevWanted) {
+      hud.banner('WANTED — ' + '★'.repeat(state.wanted));
+      audio.sting();
+      state.damageFlashTick = sim.tick;
+    } else if (state.wanted === 0 && prevWanted > 0) {
+      hud.flash('You lost them — heat is off');
+    }
     combat.update(dt, now, state);
     missions.update(dt, now);
     fx.update(dt);
@@ -393,6 +445,7 @@ function init() {
     if (state.shotCam) {
       camera.position.set(state.shotCam.x, state.shotCam.y, state.shotCam.z);
       camera.lookAt(state.shotCam.lookX, state.shotCam.lookY, state.shotCam.lookZ);
+      state.camPos.copy(camera.position);
       return;
     }
     const yaw = state.cameraYaw;
@@ -401,7 +454,14 @@ function init() {
     const cx = p.pos.x - Math.sin(yaw) * dist;
     const cz = p.pos.z - Math.cos(yaw) * dist;
     const sh = fx.shakeOffset(sim.now);
-    camera.position.set(cx + sh.x, height + sh.y, cz);
+    // Smoothed follow: the camera eases toward its target at a fixed
+    // per-frame rate instead of snapping. Visual only (not in the hash);
+    // shot cameras snap the smoothed position directly (see shots.js).
+    const tx = cx + sh.x, ty = height + sh.y, tz = cz;
+    state.camPos.x += (tx - state.camPos.x) * 0.16;
+    state.camPos.y += (ty - state.camPos.y) * 0.16;
+    state.camPos.z += (tz - state.camPos.z) * 0.16;
+    camera.position.copy(state.camPos);
     camera.lookAt(p.pos.x + Math.sin(yaw) * 4, 1.6, p.pos.z + Math.cos(yaw) * 4);
     // Camera yaw eases toward the player heading while driving.
     if (p.car) state.cameraYaw = angleLerp(state.cameraYaw, p.heading, 0.02);

@@ -10,6 +10,9 @@
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #fff; }
   #app, #app canvas { position: fixed; inset: 0; display: block; }
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #hud-damage { position: fixed; inset: 0; pointer-events: none; z-index: 4;
+    background: radial-gradient(ellipse at center, rgba(200,0,0,0) 55%, rgba(200,0,0,0.55) 100%);
+    opacity: 0; }
   .panel { background: rgba(10, 20, 35, 0.62); border: 1px solid rgba(255,255,255,0.25);
     border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(2px); }
   #hud-top-left { position: absolute; top: 12px; left: 12px; min-width: 240px; }
@@ -55,6 +58,7 @@
 </head>
 <body>
 <div id="app"></div>
+<div id="hud-damage"></div>
 <div id="hud">
   <div id="hud-top-left" class="panel">
     <div id="hud-health-row"><span>♥</span><div id="hud-health-track"><div id="hud-health-bar"></div></div><span id="hud-health">100 HP</span></div>
